@@ -1,0 +1,514 @@
+// ==UserScript==
+// @name         Discord-Style PGP UI Full (Fixed Save/Load)
+// @namespace    http://tampermonkey.net/
+// @version      1.2
+// @description  Discord style PGP UI with generate keys, friends, encrypt, decrypt, copy, edit, delete contacts for discord.com with fixed save/load profile functionality
+// @match        *://discord.com/*
+// @grant        none
+// ==/UserScript==
+
+(function () {
+  'use strict';
+
+  const UI_ID = 'pgp-ui-discord-style';
+  const TOGGLE_ID = 'pgp-toggle-discord-style';
+
+  let myPrivateKey = null;
+  let myPublicKey = null;
+  let myName = '';
+  let friends = {};
+
+  // --- Utility for base64 conversions ---
+  function arrayBufferToBase64(buffer) {
+    let binary = '';
+    const bytes = new Uint8Array(buffer);
+    for (let i = 0; i < bytes.byteLength; i++) {
+      binary += String.fromCharCode(bytes[i]);
+    }
+    return btoa(binary);
+  }
+
+  function base64ToArrayBuffer(base64) {
+    const binary_string = atob(base64);
+    const len = binary_string.length;
+    const bytes = new Uint8Array(len);
+    for (let i = 0; i < len; i++) {
+      bytes[i] = binary_string.charCodeAt(i);
+    }
+    return bytes.buffer;
+  }
+
+  // --- Crypto helpers ---
+  async function generateKeyPair() {
+    return window.crypto.subtle.generateKey(
+      {
+        name: "RSA-OAEP",
+        modulusLength: 2048,
+        publicExponent: new Uint8Array([1, 0, 1]),
+        hash: "SHA-256",
+      },
+      true,
+      ["encrypt", "decrypt"]
+    );
+  }
+
+  async function exportPublicKey(key) {
+    const exported = await window.crypto.subtle.exportKey("spki", key);
+    return arrayBufferToBase64(exported);
+  }
+
+  async function exportPrivateKey(key) {
+    const exported = await window.crypto.subtle.exportKey("pkcs8", key);
+    return arrayBufferToBase64(exported);
+  }
+
+  async function importPublicKey(keyStr) {
+    const bin = base64ToArrayBuffer(keyStr);
+    return crypto.subtle.importKey(
+      "spki",
+      bin,
+      { name: "RSA-OAEP", hash: "SHA-256" },
+      true,
+      ["encrypt"]
+    );
+  }
+
+  async function importPrivateKey(keyStr) {
+    const bin = base64ToArrayBuffer(keyStr);
+    return crypto.subtle.importKey(
+      "pkcs8",
+      bin,
+      { name: "RSA-OAEP", hash: "SHA-256" },
+      true,
+      ["decrypt"]
+    );
+  }
+
+  async function encryptMsg(pubKey, msg, sender) {
+    const enc = new TextEncoder().encode(`${sender}: ${msg}`);
+    const buf = await crypto.subtle.encrypt({ name: "RSA-OAEP" }, pubKey, enc);
+    return arrayBufferToBase64(buf);
+  }
+
+  async function decryptMsg(privKey, cipher) {
+    const bin = base64ToArrayBuffer(cipher);
+    const buf = await crypto.subtle.decrypt({ name: "RSA-OAEP" }, privKey, bin);
+    return new TextDecoder().decode(buf);
+  }
+
+  // --- Save/load profile ---
+
+  async function saveToLocal() {
+    if (!myPrivateKey || !myPublicKey) return toast("No keys to save.");
+    try {
+      const priv = await exportPrivateKey(myPrivateKey);
+      const pub = await exportPublicKey(myPublicKey);
+      const data = { name: myName, privateKey: priv, publicKey: pub, friends };
+      localStorage.setItem("pgpDiscordProfile", JSON.stringify(data));
+      toast("Profile saved.");
+    } catch (e) {
+      toast("Failed to save profile.");
+      console.error(e);
+    }
+  }
+
+  async function loadFromLocal() {
+    const raw = localStorage.getItem("pgpDiscordProfile");
+    if (!raw) return toast("No saved profile found.");
+    try {
+      const data = JSON.parse(raw);
+      myName = data.name || "";
+      friends = data.friends || {};
+      document.getElementById("pgp-name").value = myName;
+      myPrivateKey = await importPrivateKey(data.privateKey);
+      myPublicKey = await importPublicKey(data.publicKey);
+      document.getElementById("pgp-pub").value = data.publicKey;
+      document.getElementById("pgp-gen").style.display = "none";
+      document.getElementById("pgp-status").textContent = "Key loaded ✔";
+      document.getElementById("pgp-status").style.color = "#43B581";
+      renderFriends();
+      updateFriendSelect();
+      toast("Profile loaded.");
+    } catch (e) {
+      toast("Failed to load profile.");
+      console.error(e);
+    }
+  }
+
+  // --- UI Rendering and Helpers ---
+
+  function toast(msg) {
+    let t = document.createElement("div");
+    t.textContent = msg;
+    t.style.position = "fixed";
+    t.style.bottom = "80px";
+    t.style.right = "20px";
+    t.style.background = "#5865F2";
+    t.style.color = "white";
+    t.style.padding = "8px 16px";
+    t.style.borderRadius = "5px";
+    t.style.fontWeight = "600";
+    t.style.zIndex = "99999";
+    document.body.appendChild(t);
+    setTimeout(() => t.remove(), 2500);
+  }
+
+  function renderFriends() {
+    const container = document.getElementById("pgp-friends");
+    container.innerHTML = "";
+    Object.entries(friends).forEach(([id, f]) => {
+      const row = document.createElement("div");
+      row.className = "friend-row";
+      row.innerHTML = `
+        <div class="friend-name" title="${f.name}">${f.name}</div>
+        <button class="btn-copy" title="Copy Public Key">📋</button>
+        <button class="btn-edit" title="Edit Friend">✏️</button>
+        <button class="btn-del" title="Delete Friend">🗑️</button>
+      `;
+      // Copy pubkey
+      row.querySelector(".btn-copy").onclick = () => {
+        navigator.clipboard.writeText(f.key);
+        toast(`Copied ${f.name}'s public key`);
+      };
+      // Delete friend
+      row.querySelector(".btn-del").onclick = () => {
+        if (
+          confirm(`Delete friend "${f.name}"? This cannot be undone.`)
+        ) {
+          delete friends[id];
+          renderFriends();
+          updateFriendSelect();
+        }
+      };
+      // Edit friend
+      row.querySelector(".btn-edit").onclick = () => {
+        const newName = prompt("Edit friend name:", f.name);
+        if (!newName) return;
+        const newKey = prompt("Edit friend's public key:", f.key);
+        if (!newKey) return;
+        delete friends[id];
+        friends[newName.toLowerCase()] = { name: newName, key: newKey.trim() };
+        renderFriends();
+        updateFriendSelect();
+      };
+      container.appendChild(row);
+    });
+  }
+
+  function updateFriendSelect() {
+    const sel = document.getElementById("pgp-select");
+    sel.innerHTML = '<option value="" disabled selected>Select friend</option>';
+    Object.entries(friends).forEach(([id, f]) => {
+      const opt = document.createElement("option");
+      opt.value = id;
+      opt.textContent = f.name;
+      sel.appendChild(opt);
+    });
+  }
+
+  function createUI() {
+    if (document.getElementById(UI_ID)) return;
+    const style = document.createElement("style");
+    style.textContent = `
+      #${UI_ID} {
+        position: fixed;
+        bottom: 1rem;
+        right: 1rem;
+        width: 320px;
+        background: #36393F;
+        color: #DCDDDE;
+        border-radius: 8px;
+        box-shadow: 0 2px 10px rgba(0,0,0,0.8);
+        font-family: "Whitney", "Helvetica Neue", Helvetica, Arial, sans-serif;
+        font-size: 14px;
+        z-index: 999999;
+        display: flex;
+        flex-direction: column;
+        overflow: hidden;
+      }
+      #${UI_ID} header {
+        background: #2F3136;
+        padding: 10px 16px;
+        font-weight: 600;
+        font-size: 16px;
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+      }
+      #${UI_ID} header button {
+        background: transparent;
+        border: none;
+        color: #B9BBBE;
+        font-size: 18px;
+        cursor: pointer;
+      }
+      #${UI_ID} .content {
+        padding: 10px 16px;
+        display: flex;
+        flex-direction: column;
+        gap: 8px;
+        max-height: 480px;
+        overflow-y: auto;
+      }
+      #${UI_ID} label {
+        font-weight: 600;
+        margin-bottom: 4px;
+      }
+      #${UI_ID} input[type="text"],
+      #${UI_ID} textarea,
+      #${UI_ID} select {
+        width: 100%;
+        background: #202225;
+        border: none;
+        border-radius: 4px;
+        color: #DCDDDE;
+        padding: 6px 8px;
+        font-size: 13px;
+        resize: vertical;
+        font-family: inherit;
+      }
+      #${UI_ID} textarea {
+        min-height: 60px;
+      }
+      #${UI_ID} button {
+        background: #5865F2;
+        border: none;
+        border-radius: 4px;
+        color: white;
+        font-weight: 600;
+        padding: 8px 12px;
+        cursor: pointer;
+        font-size: 14px;
+        transition: background-color 0.2s ease;
+      }
+      #${UI_ID} button:hover {
+        background: #4752C4;
+      }
+      .friend-row {
+        display: flex;
+        align-items: center;
+        background: #2F3136;
+        padding: 6px 10px;
+        margin-bottom: 4px;
+        border-radius: 4px;
+      }
+      .friend-name {
+        flex-grow: 1;
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        font-weight: 500;
+        margin-right: 6px;
+      }
+      .friend-row button {
+        background: transparent;
+        border: none;
+        color: #B9BBBE;
+        font-size: 16px;
+        cursor: pointer;
+        padding: 2px 6px;
+        margin-left: 4px;
+      }
+      #pgp-status {
+        margin-top: 6px;
+        font-weight: 600;
+        color: #43B581;
+        text-align: center;
+      }
+      #pgp-copy-msg {
+        position: absolute;
+        right: 10px;
+        bottom: 55px;
+        background: #5865F2;
+        color: white;
+        border-radius: 4px;
+        padding: 6px 10px;
+        font-size: 14px;
+        cursor: pointer;
+        user-select: none;
+      }
+      #pgp-encrypted-wrapper {
+        position: relative;
+      }
+    `;
+    document.head.appendChild(style);
+
+    const container = document.createElement("div");
+    container.id = UI_ID;
+    container.style.display = "none";
+    container.innerHTML = `
+      <header>
+        PGP
+        <button id="pgp-close" title="Close">✕</button>
+      </header>
+      <div class="content">
+        <label>Your name:</label>
+        <input type="text" id="pgp-name" placeholder="Your name" autocomplete="off"/>
+        <button id="pgp-gen">Generate Key Pair</button>
+        <label>Your public key:</label>
+        <textarea id="pgp-pub" readonly placeholder="Your public key appears here"></textarea>
+        <div id="pgp-status">No key generated</div>
+
+        <hr style="border-color:#202225;margin:10px 0;" />
+
+        <label>Add friend:</label>
+        <input type="text" id="pgp-friend-name" placeholder="Friend's name" autocomplete="off"/>
+        <textarea id="pgp-friend-key" placeholder="Friend's public key"></textarea>
+        <button id="pgp-add-friend">Add Friend</button>
+
+        <label>Friends:</label>
+        <div id="pgp-friends"></div>
+
+        <hr style="border-color:#202225;margin:10px 0;" />
+
+        <label>Encrypt message:</label>
+        <select id="pgp-select"></select>
+        <textarea id="pgp-message" placeholder="Type message to encrypt"></textarea>
+        <button id="pgp-encrypt">Encrypt</button>
+        <div id="pgp-encrypted-wrapper">
+          <textarea id="pgp-encrypted" readonly placeholder="Encrypted message"></textarea>
+          <button id="pgp-copy-msg" title="Copy Encrypted Message">📋</button>
+        </div>
+
+        <hr style="border-color:#202225;margin:10px 0;" />
+
+        <label>Decrypt message:</label>
+        <textarea id="pgp-decrypt-message" placeholder="Paste encrypted message here"></textarea>
+        <button id="pgp-decrypt">Decrypt</button>
+        <textarea id="pgp-decrypted" readonly placeholder="Decrypted message will appear here"></textarea>
+
+        <hr style="border-color:#202225;margin:10px 0;" />
+
+        <button id="pgp-save">Save Profile</button>
+        <button id="pgp-load">Load Profile</button>
+      </div>
+    `;
+    document.body.appendChild(container);
+
+    // Toggle button
+    const toggleBtn = document.createElement("button");
+    toggleBtn.id = TOGGLE_ID;
+    toggleBtn.textContent = "PGP";
+    Object.assign(toggleBtn.style, {
+      position: "fixed",
+      bottom: "1rem",
+      right: "1rem",
+      width: "48px",
+      height: "48px",
+      background: "#5865F2",
+      color: "white",
+      borderRadius: "50%",
+      fontWeight: "700",
+      fontSize: "18px",
+      border: "none",
+      cursor: "pointer",
+      zIndex: 999998,
+      userSelect: "none",
+      boxShadow: "0 2px 10px rgba(0,0,0,0.8)",
+    });
+    document.body.appendChild(toggleBtn);
+
+    toggleBtn.onclick = () => {
+      const el = document.getElementById(UI_ID);
+      if (el.style.display === "none") {
+        el.style.display = "flex";
+        toggleBtn.style.display = "none";
+      }
+    };
+    document.getElementById("pgp-close").onclick = () => {
+      document.getElementById(UI_ID).style.display = "none";
+      toggleBtn.style.display = "block";
+    };
+
+    // Generate keys
+    document.getElementById("pgp-gen").onclick = async () => {
+      const nameInput = document.getElementById("pgp-name");
+      const nm = nameInput.value.trim();
+      if (!nm) return alert("Please enter your name first.");
+      myName = nm;
+
+      try {
+        const keys = await generateKeyPair();
+        myPrivateKey = keys.privateKey;
+        myPublicKey = keys.publicKey;
+        const pubStr = await exportPublicKey(myPublicKey);
+        document.getElementById("pgp-pub").value = pubStr;
+        document.getElementById("pgp-gen").style.display = "none";
+        document.getElementById("pgp-status").textContent = "Key generated ✔";
+        document.getElementById("pgp-status").style.color = "#43B581";
+        await saveToLocal();
+        updateFriendSelect();
+        toast("Key pair generated.");
+      } catch (e) {
+        alert("Error during key generation.");
+      }
+    };
+
+    // Add friend
+    document.getElementById("pgp-add-friend").onclick = () => {
+      const fName = document.getElementById("pgp-friend-name").value.trim();
+      const fKey = document.getElementById("pgp-friend-key").value.trim();
+      if (!fName || !fKey) return alert("Friend name and key required.");
+      friends[fName.toLowerCase()] = { name: fName, key: fKey };
+      document.getElementById("pgp-friend-name").value = "";
+      document.getElementById("pgp-friend-key").value = "";
+      renderFriends();
+      updateFriendSelect();
+      toast(`Added friend "${fName}". Don't forget to save your profile.`);
+    };
+
+    // Encrypt message
+    document.getElementById("pgp-encrypt").onclick = async () => {
+      if (!myPrivateKey || !myPublicKey) return alert("Generate your keys first.");
+      const sel = document.getElementById("pgp-select");
+      const friendId = sel.value;
+      if (!friendId) return alert("Select a friend to encrypt the message for.");
+      const friend = friends[friendId];
+      if (!friend) return alert("Friend not found.");
+
+      const message = document.getElementById("pgp-message").value.trim();
+      if (!message) return alert("Enter a message to encrypt.");
+
+      try {
+        const pubKey = await importPublicKey(friend.key);
+        const enc = await encryptMsg(pubKey, message, myName);
+        document.getElementById("pgp-encrypted").value = enc;
+        toast("Message encrypted. Use the copy button to share.");
+      } catch {
+        alert("Encryption failed.");
+      }
+    };
+
+    // Copy encrypted message
+    document.getElementById("pgp-copy-msg").onclick = () => {
+      const val = document.getElementById("pgp-encrypted").value;
+      if (!val) return alert("Nothing to copy.");
+      navigator.clipboard.writeText(val);
+      toast("Encrypted message copied.");
+    };
+
+    // Decrypt message
+    document.getElementById("pgp-decrypt").onclick = async () => {
+      if (!myPrivateKey) return alert("Generate your keys first.");
+      const encrypted = document.getElementById("pgp-decrypt-message").value.trim();
+      if (!encrypted) return alert("Paste an encrypted message to decrypt.");
+      try {
+        const decrypted = await decryptMsg(myPrivateKey, encrypted);
+        document.getElementById("pgp-decrypted").value = decrypted;
+        toast("Message decrypted.");
+      } catch {
+        alert("Decryption failed. Make sure the message and keys are correct.");
+      }
+    };
+
+    // Save/load buttons
+    document.getElementById("pgp-save").onclick = saveToLocal;
+    document.getElementById("pgp-load").onclick = loadFromLocal;
+
+    // Load profile automatically on script load
+    loadFromLocal();
+  }
+
+  // Start UI
+  createUI();
+})();
