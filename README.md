@@ -1,89 +1,58 @@
-# Discord-Style PGP UI Full (Fixed Save/Load)
+# Discord-Style PGP UI for Tampermonkey
 
-A Tampermonkey userscript that adds a Discord-style PGP interface directly inside [discord.com](https://discord.com), enabling you to generate RSA key pairs, manage friends' public keys, and encrypt/decrypt messages securely — all with fixed save/load profile functionality.
+A lightweight **PGP (Pretty Good Privacy)** user interface inspired by Discord's style — fully client-side, runs as a Tampermonkey userscript on [discord.com](https://discord.com).
 
 ---
 
 ## Features
 
-- **Discord-themed UI** integrated directly on discord.com
-- Generate RSA 2048-bit key pairs for encryption/decryption
-- Manage a contact list ("friends") with names and public keys
-- Encrypt messages to friends with their public keys
-- Decrypt received encrypted messages using your private key
-- Copy public keys and encrypted messages with one click
-- Edit and delete friends from your contact list
-- Save/load your PGP profile (keys, name, friends) locally with fixed persistence
-- Lightweight, no external dependencies, runs entirely in-browser
-- Easy toggle button to open/close the PGP UI panel
+- Generate RSA 2048-bit public/private key pair in-browser  
+- Manage friends (contacts) with public keys: add, edit, delete  
+- Encrypt messages to friends using their public keys  
+- Decrypt messages using your private key  
+- Copy friend’s public key easily  
+- Save your entire profile (keys + friends) as a JSON file by downloading it  
+- Load your profile by uploading a JSON file  
+- Clean, Discord-like UI with togglable panel on the page  
 
 ---
 
 ## Installation
 
-1. Install a userscript manager extension in your browser, such as:
-   - [Tampermonkey](https://www.tampermonkey.net/)
-   - [Violentmonkey](https://violentmonkey.github.io/)
-   - [Greasemonkey](https://www.greasespot.net/)
-
-2. Create a new userscript and paste the contents of this script.
-
-3. Save and reload discord.com. You should see a **PGP** button at the bottom-right corner.
+1. Install [Tampermonkey](https://www.tampermonkey.net/) (or a similar userscript manager) in your browser.  
+2. Create a new userscript and paste the entire script code into it.  
+3. Save the script and navigate to [discord.com](https://discord.com).  
+4. Click the **PGP** button at the bottom right to open the UI.
 
 ---
 
 ## Usage
 
-### Generate Keys
-
-1. Click the **PGP** button to open the panel.
-2. Enter your name and click **Generate Key Pair**.
-3. Your public key will appear, and your key pair is saved locally.
-
-### Manage Friends
-
-- Add friends by entering their name and public key, then click **Add Friend**.
-- Edit or delete existing friends from the list.
-- Copy a friend's public key to share it easily.
-
-### Encrypt Message
-
-1. Select a friend from the dropdown.
-2. Type your message in the "Encrypt message" box.
-3. Click **Encrypt** to get the encrypted text.
-4. Copy the encrypted message and send it securely.
-
-### Decrypt Message
-
-1. Paste an encrypted message into the "Decrypt message" box.
-2. Click **Decrypt** to reveal the original message.
-
-### Save and Load Profile
-
-- Use **Save Profile** to store your keys and contacts in browser localStorage.
-- Use **Load Profile** to restore your saved data.
-- The script automatically loads your profile on page load if saved.
+- **Generate Key Pair:** Enter your name and click "Generate Key Pair".  
+- **Add Friend:** Enter friend’s name and their public key, then click "Add Friend".  
+- **Encrypt Message:** Select a friend, enter a message, and click "Encrypt". The encrypted message will appear below.  
+- **Decrypt Message:** Paste an encrypted message and click "Decrypt" to see the plaintext.  
+- **Save Profile:** Click "Save Profile (Download)" to download your keys and contacts as a JSON file.  
+- **Load Profile:** Click "Load Profile (Upload)" to upload a previously saved JSON profile.
 
 ---
 
-## Technical Details
+## Security Notice
 
-- Uses Web Crypto API for RSA-OAEP 2048-bit key generation and encryption/decryption.
-- Stores data locally using `localStorage` under the key `pgpDiscordProfile`.
-- UI styled to match Discord's dark theme and user experience.
-- Clipboard integration for easy copy-paste of keys and messages.
-
----
-
-## Permissions
-
-- No special permissions required beyond access to `discord.com`.
-- Runs entirely client-side, no data is sent externally.
+- All cryptographic operations happen **locally in your browser**; no data is sent anywhere.  
+- Keep your private key safe and never share it.  
+- The profile JSON contains your private key and friends’ public keys — treat it securely.
 
 ---
 
-## Contributing
+## How it works
 
-Feel free to open issues or submit pull requests for improvements or bug fixes.
+- Uses the Web Crypto API for RSA-OAEP key generation, encryption, and decryption.  
+- Saves and loads profile as JSON files via browser download/upload (no `localStorage`).  
+- UI styled with embedded CSS mimicking Discord’s color scheme.
 
 ---
+
+## Development & Contributions
+
+Feel free to fork and customize this script. Pull requests and issues are welcome!
